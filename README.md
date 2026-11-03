@@ -17,7 +17,7 @@
 ### 方式一：按 Git 提交安装（最简单）
 
 ```
-git+https://github.com/lwfjyjy/copy-file-reference.git#<commit-sha>
+git+https://github.com/lwfjyjy/dsh-copy-file-reference.git#<commit-sha>
 ```
 
 或在 DeepSeek Harness 的插件管理里用 `install_bundle`，target 填上面的地址。
@@ -26,7 +26,7 @@ git+https://github.com/lwfjyjy/copy-file-reference.git#<commit-sha>
 
 1. 打开 Plugins → Experimental plugins → More → 开启 **Custom plugin markets**
 2. 在 **Discover** 添加索引地址：
-   `https://lwfjyjy.github.io/copy-file-reference/index.json`
+   `https://lwfjyjy.github.io/dsh-copy-file-reference/index.json`
 3. 找到「复制文件行号引用」并安装
 
 ## 兼容性

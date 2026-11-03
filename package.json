@@ -5,8 +5,8 @@
   "type": "module",
   "license": "MIT",
   "author": "lwfjyjy",
-  "homepage": "https://github.com/lwfjyjy/copy-file-reference#readme",
-  "repository": { "type": "git", "url": "https://github.com/lwfjyjy/copy-file-reference.git" },
+  "homepage": "https://github.com/lwfjyjy/dsh-copy-file-reference#readme",
+  "repository": { "type": "git", "url": "https://github.com/lwfjyjy/dsh-copy-file-reference.git" },
   "keywords": ["dsh-plugin", "deepseek-harness", "code-reference", "line-number", "clipboard"],
   "engines": { "node": ">=24", "dsh": ">=0.2.1-rc.5" },
   "exports": {
