@@ -1,39 +1,62 @@
 # DSH 插件：复制文件行号引用
 
-在 DeepSeek Harness 右侧的文件预览里，选中或点击代码行，即可复制/插入形如
+DeepSeek Harness 插件：在**右侧文件预览**里选中或点击代码行，一键复制 / 插入形如
 `@src/main/java/.../LogAspect.java#L92-L94` 的文件引用。
 
 ## 功能
 
 - **单击某行**：自动选中该行并复制 `@相对路径#L92`
 - **拖选多行**：自动复制 `@相对路径#L92-L94`
-- **悬浮工具栏**
+- **代码下方悬浮工具栏**
   - 「复制引用」：写入剪贴板（成功后显示「已复制」）
-  - 「插入」：把引用插入当前会话输入框（成功后显示「已插入」）
+  - 「插入」：插入当前会话输入框（成功后显示「已插入」）
 - 路径按**工作区根目录**计算
 
-## 安装
+## 安装（DeepSeek Harness）
 
-### 方式一：按 Git 提交安装（最简单）
+### 推荐：从 GitHub 安装
+
+1. 打开左侧 **插件（Plugins）** 页面
+2. 右上角点 **「+ 添加插件」**
+3. 在输入框粘贴：`https://github.com/lwfjyjy/dsh-copy-file-reference`
+4. 点 **「安装」**，完成后点 **「立即启用」**
+5. ⚠️ **完全退出并重新打开** DeepSeek Harness（不是只刷新）
+
+> 想锁定某个版本，可改填：
+> `git+https://github.com/lwfjyjy/dsh-copy-file-reference.git#dbdfd9b6187b5c12d4f96a7fcba916f13ac94840`
+
+### 本地开发安装
+
+把仓库克隆到本地后，在「添加插件」里填**克隆后的目录路径**即可（`link:` 方式，改代码即生效）。
+
+### 插件市场（可选，需先开启 Pages）
+
+在 插件 → 实验性插件 → 打开 **自定义插件市场** 后，在 **Discover** 里添加索引地址：
 
 ```
-git+https://github.com/lwfjyjy/dsh-copy-file-reference.git#<commit-sha>
+https://lwfjyjy.github.io/dsh-copy-file-reference/index.json
 ```
 
-或在 DeepSeek Harness 的插件管理里用 `install_bundle`，target 填上面的地址。
+> ⚠️ 该索引需要仓库先开启 GitHub Pages（Settings → Pages → main 分支 `/docs` 目录）。
 
-### 方式二：通过插件市场索引
+## 使用
 
-1. 打开 Plugins → Experimental plugins → More → 开启 **Custom plugin markets**
-2. 在 **Discover** 添加索引地址：
-   `https://lwfjyjy.github.io/dsh-copy-file-reference/index.json`
-3. 找到「复制文件行号引用」并安装
+1. 在右侧文件预览打开一个**代码文件**（如 `.java`、`.xml`）
+2. **单击某行**，或**拖选多行**
+3. 代码下方出现工具栏，点「复制引用」或「插入」
+4. 粘贴到对话输入框即可使用
 
 ## 兼容性
 
 - DSH `>=0.2.1-rc.5`
 - Node `>=24`
-- 仅对代码高亮可打开的文本文件（如 `.java`、`.xml`）生效
+- 仅对**代码高亮可打开**的文本文件生效（图片、PDF 等不适用）
+
+## 常见问题
+
+- **工具栏不出现**：确认插件已「启用」，并重启过应用；且操作的是右侧文件预览里的代码。
+- **安装后没生效**：完全退出应用再打开，而不是只刷新页面。
+- **更新插件**：先在插件页卸载，再按上面的步骤重新安装（DSH 暂不支持原地升级）。
 
 ## 许可证
 
