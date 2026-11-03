@@ -20,9 +20,9 @@
         "zh": "在文件预览里复制或插入 @路径#L92-L94 的行号引用。"
       },
       "author": "lwfjyjy",
-      "homepage": "https://github.com/lwfjyjy/copy-file-reference",
+      "homepage": "https://github.com/lwfjyjy/dsh-copy-file-reference",
       "repository": {
-        "url": "https://github.com/lwfjyjy/copy-file-reference"
+        "url": "https://github.com/lwfjyjy/dsh-copy-file-reference"
       },
       "icon": "icon.svg",
       "metadata": {
@@ -35,11 +35,11 @@
       "versions": [
         {
           "version": "1.0.0",
-          "publishTimestamp": 1793686962,
+          "publishTimestamp": 1793688315,
           "source": {
             "type": "git",
-            "url": "https://github.com/lwfjyjy/copy-file-reference",
-            "commit": "b850f32b38b9f2a5d36357ed5596afe2286cce19"
+            "url": "https://github.com/lwfjyjy/dsh-copy-file-reference",
+            "commit": "dbdfd9b6187b5c12d4f96a7fcba916f13ac94840"
           },
           "engines": {
             "dsh": ">=0.2.1-rc.5"
