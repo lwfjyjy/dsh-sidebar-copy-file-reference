@@ -1,0 +1,34 @@
+{
+  "name": "@lwfjyjy/copy-file-reference",
+  "version": "1.0.0",
+  "description": "DSH 插件：在右侧文件预览中选中或点击代码行，一键复制/插入 @相对路径#L92-L94 的行号引用。",
+  "type": "module",
+  "license": "MIT",
+  "author": "lwfjyjy",
+  "homepage": "https://github.com/lwfjyjy/copy-file-reference#readme",
+  "repository": { "type": "git", "url": "https://github.com/lwfjyjy/copy-file-reference.git" },
+  "keywords": ["dsh-plugin", "deepseek-harness", "code-reference", "line-number", "clipboard"],
+  "engines": { "node": ">=24", "dsh": ">=0.2.1-rc.5" },
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg"
+  },
+  "files": ["index.js", "client.js", "cordis.patch.yml", "locale/*.json", "icon.svg", "README.md", "LICENSE"],
+  "dsh": {
+    "manifestVersion": 1,
+    "bundle": { "patch": "./cordis.patch.yml" },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": [
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-ui-session",
+        "@deepseek-ai/dsh-client-ui-conversation",
+        "@deepseek-ai/dsh-client-ui-sidebar-documentpreview",
+        "@deepseek-ai/dsh-client-ui-sidebar-right"
+      ]
+    }
+  }
+}

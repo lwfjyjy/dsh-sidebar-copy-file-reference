@@ -1,0 +1,3 @@
+- insert:
+    - id: copy-file-reference
+      name: '@lwfjyjy/copy-file-reference'

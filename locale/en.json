@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Copy File Reference",
+    "description": "Shows a toolbar under the file preview that copies or inserts the selected lines as an @path#L92-L94 reference."
+  }
+}
