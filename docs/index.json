@@ -1,0 +1,51 @@
+{
+  "format": 1,
+  "title": {
+    "en": "lwf DSH Plugins",
+    "zh": "lwf 的 DSH 插件"
+  },
+  "description": {
+    "en": "Plugins for DeepSeek Harness by lwfjyjy.",
+    "zh": "lwfjyjy 的 DeepSeek Harness 插件。"
+  },
+  "plugins": [
+    {
+      "name": "@lwfjyjy/copy-file-reference",
+      "title": {
+        "en": "Copy File Reference",
+        "zh": "复制文件行号引用"
+      },
+      "description": {
+        "en": "Copy or insert @path#L92-L94 references from the file preview.",
+        "zh": "在文件预览里复制或插入 @路径#L92-L94 的行号引用。"
+      },
+      "author": "lwfjyjy",
+      "homepage": "https://github.com/lwfjyjy/copy-file-reference",
+      "repository": {
+        "url": "https://github.com/lwfjyjy/copy-file-reference"
+      },
+      "icon": "icon.svg",
+      "metadata": {
+        "keywords": [
+          "reference",
+          "line-number",
+          "clipboard"
+        ]
+      },
+      "versions": [
+        {
+          "version": "1.0.0",
+          "publishTimestamp": 1793686962,
+          "source": {
+            "type": "git",
+            "url": "https://github.com/lwfjyjy/copy-file-reference",
+            "commit": "b850f32b38b9f2a5d36357ed5596afe2286cce19"
+          },
+          "engines": {
+            "dsh": ">=0.2.1-rc.5"
+          }
+        }
+      ]
+    }
+  ]
+}
