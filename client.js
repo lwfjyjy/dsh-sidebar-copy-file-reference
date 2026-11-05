@@ -1,5 +1,5 @@
 window.__ModuleLoader__.load({
-  id: '@lwfjyjy/sidebar-copy-file-reference',
+  id: '@lwfjyjy/dsh-sidebar-copy-file-reference',
   factory(require) {
     const React = require('react');
     const h = React.createElement;

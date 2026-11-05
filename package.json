@@ -1,5 +1,5 @@
 {
-  "name": "@lwfjyjy/sidebar-copy-file-reference",
+  "name": "@lwfjyjy/dsh-sidebar-copy-file-reference",
   "version": "1.0.0",
   "description": "DSH 插件：在右侧文件预览中选中或点击代码行，一键复制/插入 @相对路径#L92-L94 的行号引用。",
   "type": "module",

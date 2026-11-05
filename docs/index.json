@@ -10,7 +10,7 @@
   },
   "plugins": [
     {
-      "name": "@lwfjyjy/sidebar-copy-file-reference",
+      "name": "@lwfjyjy/dsh-sidebar-copy-file-reference",
       "title": {
         "en": "Copy File Reference",
         "zh": "复制文件行号引用"
