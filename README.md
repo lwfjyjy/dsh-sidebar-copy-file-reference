@@ -23,7 +23,7 @@ DeepSeek Harness 插件：在**右侧文件预览**里选中或点击代码行�
 5. ⚠️ **完全退出并重新打开** DeepSeek Harness（不是只刷新）
 
 > 想锁定某个版本，可改填：
-> `git+https://github.com/lwfjyjy/dsh-sidebar-copy-file-reference.git#2288c9fc79810de3a5ec479184229b4c03b56650`
+> `git+https://github.com/lwfjyjy/dsh-sidebar-copy-file-reference.git#da674e26c551b14d918e98e092430631ac7e1682`
 
 ### 本地开发安装
 
