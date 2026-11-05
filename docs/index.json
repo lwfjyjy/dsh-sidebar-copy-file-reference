@@ -39,7 +39,7 @@
           "source": {
             "type": "git",
             "url": "https://github.com/lwfjyjy/dsh-sidebar-copy-file-reference",
-            "commit": "dbdfd9b6187b5c12d4f96a7fcba916f13ac94840"
+            "commit": "2288c9fc79810de3a5ec479184229b4c03b56650"
           },
           "engines": {
             "dsh": ">=0.2.1-rc.5"
