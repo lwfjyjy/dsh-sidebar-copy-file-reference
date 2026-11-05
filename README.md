@@ -18,12 +18,12 @@ DeepSeek Harness 插件：在**右侧文件预览**里选中或点击代码行�
 
 1. 打开左侧 **插件（Plugins）** 页面
 2. 右上角点 **「+ 添加插件」**
-3. 在输入框粘贴：`https://github.com/lwfjyjy/dsh-copy-file-reference`
+3. 在输入框粘贴：`https://github.com/lwfjyjy/dsh-sidebar-copy-file-reference`
 4. 点 **「安装」**，完成后点 **「立即启用」**
 5. ⚠️ **完全退出并重新打开** DeepSeek Harness（不是只刷新）
 
 > 想锁定某个版本，可改填：
-> `git+https://github.com/lwfjyjy/dsh-copy-file-reference.git#dbdfd9b6187b5c12d4f96a7fcba916f13ac94840`
+> `git+https://github.com/lwfjyjy/dsh-sidebar-copy-file-reference.git#dbdfd9b6187b5c12d4f96a7fcba916f13ac94840`
 
 ### 本地开发安装
 
@@ -34,7 +34,7 @@ DeepSeek Harness 插件：在**右侧文件预览**里选中或点击代码行�
 在 插件 → 实验性插件 → 打开 **自定义插件市场** 后，在 **Discover** 里添加索引地址：
 
 ```
-https://lwfjyjy.github.io/dsh-copy-file-reference/index.json
+https://lwfjyjy.github.io/dsh-sidebar-copy-file-reference/index.json
 ```
 
 > ⚠️ 该索引需要仓库先开启 GitHub Pages（Settings → Pages → main 分支 `/docs` 目录）。

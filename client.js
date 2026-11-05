@@ -1,10 +1,10 @@
 window.__ModuleLoader__.load({
-  id: '@lwfjyjy/copy-file-reference',
+  id: '@lwfjyjy/sidebar-copy-file-reference',
   factory(require) {
     const React = require('react');
     const h = React.createElement;
 
-    const NS = 'copyFileReference';
+    const NS = 'sidebarCopyFileReference';
 
     /** Chinese dictionary doubles as the fallback when the locale service is absent. */
     const DEFAULT_LABELS = {
@@ -384,17 +384,17 @@ window.__ModuleLoader__.load({
     function apply(ctx) {
       ctx.effect(
         () => ctx.locale.register(NS, { zh, en }),
-        'copy-file-reference: dictionaries',
+        'sidebar-copy-file-reference: dictionaries',
       );
       ctx.slots.inject('shell.overlay', () =>
         ctx.slots.register(
-          { name: 'shell.overlay', id: 'copy-file-reference', order: 100, locale: NS },
+          { name: 'shell.overlay', id: 'sidebar-copy-file-reference', order: 100, locale: NS },
           SelectionToolbar,
         ),
       );
       ctx.slots.inject('sidebar.right.tab.document.actions', () =>
         ctx.slots.register(
-          { name: 'sidebar.right.tab.document.actions', id: 'copy-file-reference-probe', order: 50 },
+          { name: 'sidebar.right.tab.document.actions', id: 'sidebar-copy-file-reference-probe', order: 50 },
           DocProbe,
         ),
       );

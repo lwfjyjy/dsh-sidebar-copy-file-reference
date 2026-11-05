@@ -1,13 +1,13 @@
 {
-  "name": "@lwfjyjy/copy-file-reference",
+  "name": "@lwfjyjy/sidebar-copy-file-reference",
   "version": "1.0.0",
   "description": "DSH 插件：在右侧文件预览中选中或点击代码行，一键复制/插入 @相对路径#L92-L94 的行号引用。",
   "type": "module",
   "license": "MIT",
   "author": "lwfjyjy",
-  "homepage": "https://github.com/lwfjyjy/dsh-copy-file-reference#readme",
-  "repository": { "type": "git", "url": "https://github.com/lwfjyjy/dsh-copy-file-reference.git" },
-  "keywords": ["dsh-plugin", "deepseek-harness", "code-reference", "line-number", "clipboard"],
+  "homepage": "https://github.com/lwfjyjy/dsh-sidebar-copy-file-reference#readme",
+  "repository": { "type": "git", "url": "https://github.com/lwfjyjy/dsh-sidebar-copy-file-reference.git" },
+  "keywords": ["dsh-plugin", "deepseek-harness", "code-reference", "line-number", "clipboard", "sidebar"],
   "engines": { "node": ">=24", "dsh": ">=0.2.1-rc.5" },
   "exports": {
     ".": "./index.js",
