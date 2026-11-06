@@ -4,6 +4,9 @@ window.__ModuleLoader__.load({
     const React = require('react');
     const h = React.createElement;
 
+    // 个别渲染环境没有 useLayoutEffect，退回 useEffect（避免告警且行为一致）。
+    const useIsomorphicLayoutEffect = React.useLayoutEffect || React.useEffect;
+
     const NS = 'sidebarCopyFileReference';
 
     /** 中文词典同时作为 locale 服务缺席时的兜底文案。 */
@@ -14,6 +17,8 @@ window.__ModuleLoader__.load({
       insert: '插入',
       inserted: '已插入',
       insertFail: '插入失败',
+      fileCopy: '复制文件引用',
+      fileInsert: '插入文件引用',
       toolbarLabel: '文件引用操作',
       close: '关闭',
     };
@@ -25,12 +30,14 @@ window.__ModuleLoader__.load({
       insert: 'Insert',
       inserted: 'Inserted',
       insertFail: 'Insert failed',
+      fileCopy: 'Copy file reference',
+      fileInsert: 'Insert file reference',
       toolbarLabel: 'File reference actions',
       close: 'Close',
     };
 
     /**
-     * 手绘三枚 24×24 线性图标，数据格式与 morphicons 的 IconNode 一致：
+     * 手绘四枚 24×24 线性图标，数据格式与 morphicons 的 IconNode 一致：
      * 每个图标是 [[标签, 属性], …]，标签支持 path/rect/line/circle 等。
      */
     const MORPH_ICONS = {
@@ -39,10 +46,20 @@ window.__ModuleLoader__.load({
         ['rect', { x: 8, y: 8, width: 14, height: 14, rx: 2 }],
         ['path', { d: 'M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2' }],
       ],
-      // 左箭头：把引用送进输入框
-      arrow: [
-        ['path', { d: 'M19 12H5' }],
-        ['path', { d: 'M11 18l-6-6 6-6' }],
+      // 文件插入：左边一页文档（右上折角）+ 右边指向它的插入箭头，合为一个图标
+      fileInsert: [
+        ['path', { d: 'M5 3h5l3 3v13a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z' }],
+        ['path', { d: 'M10 3v3h3' }],
+        ['path', { d: 'M22 12h-8' }],
+        ['path', { d: 'M17 9l-3 3 3 3' }],
+      ],
+      // 行插入：左边行号竖线 + 两条代码行，右边箭头指向行间（在行间插入）
+      lineInsert: [
+        ['path', { d: 'M3 6v12' }],
+        ['path', { d: 'M7 9h7' }],
+        ['path', { d: 'M7 15h7' }],
+        ['path', { d: 'M22 12h-8' }],
+        ['path', { d: 'M17 9l-3 3 3 3' }],
       ],
       // 钩子：成功反馈
       check: [['path', { d: 'M20 6L9 17l-5-5' }]],
@@ -57,6 +74,14 @@ window.__ModuleLoader__.load({
     // 文档预览没有暴露选区 API，所以行号只能从已渲染的代码块反推。
     // 头部探针（会话级）把当前文件前缀和输入框的插入动作发布到这里。
     let currentDoc = null;
+
+    // 文档切换（打开/关闭文件）时通知常驻的文件级工具条重新定位。
+    const docSubscribers = new Set();
+    function publishDoc() {
+      docSubscribers.forEach((fn) => {
+        try { fn(); } catch (e) { /* 忽略单个订阅者异常 */ }
+      });
+    }
 
     /** 把绝对路径转成相对会话工作目录的路径。 */
     function toRelativePath(absolutePath, cwd) {
@@ -88,6 +113,17 @@ window.__ModuleLoader__.load({
       return rect.width < 80 || rect.height < 60 ? null : rect;
     }
 
+    // 页面里可能同时存在多个代码预览（如聊天记录里的代码块），
+    // 取最靠右且可见的那个，基本就是右侧栏当前打开的文档。
+    function activePreview() {
+      let best = null;
+      document.querySelectorAll('[data-code-preview]').forEach((el) => {
+        const rect = previewRect(el);
+        if (rect && (!best || rect.left > best.left)) best = rect;
+      });
+      return best;
+    }
+
     /** 清掉并复位一个定时器 ref。 */
     function clearTimer(ref) {
       if (ref.current) {
@@ -113,8 +149,10 @@ window.__ModuleLoader__.load({
             : null;
         const mine = { prefix: '@' + toRelativePath(props.absolutePath, cwd), insert };
         currentDoc = mine;
+        publishDoc();
         return () => {
           if (currentDoc === mine) currentDoc = null;
+          publishDoc();
         };
       }, [props.absolutePath, cwd, inputActions]);
       return null;
@@ -241,15 +279,24 @@ window.__ModuleLoader__.load({
       return selectionInfo();
     }
 
-    /** 把工具栏锚定在代码预览区的右上角。 */
-    function makeBar(text, rect) {
-      // 12px 留白，刚好容纳右上角悬浮的关闭按钮，避免被窗口边缘裁掉
-      const gap = 12;
+    // 原生代码块顶部有一条「语言 + 复制/换行」横幅（约 36~42px），
+    // 两组悬浮工具条都要落在它下方，避免遮挡原生复制按钮。
+    const BANNER_CLEAR = 48;   // 文件组距代码区顶部：越过原生横幅再留安全间距
+    const BAR_HEIGHT = 36;     // 单条工具条高度：30px 按钮 + 上下各 3px 内边距
+    const BAR_GAP = 6;         // 两条工具条之间的间距
+    const RIGHT_GAP = 12;      // 右侧留白，容纳行组右上角的关闭按钮
+
+    /** 计算浮层在代码预览区右上角的锚点，top 由调用方按需叠加。 */
+    function barPosition(rect, topOffset) {
       return {
-        text,
-        top: Math.round(rect.top + gap),
-        right: Math.round(Math.max(8, window.innerWidth - rect.right + gap)),
+        top: Math.round(rect.top + topOffset),
+        right: Math.round(Math.max(8, window.innerWidth - rect.right + RIGHT_GAP)),
       };
+    }
+
+    /** 行引用工具条：锚定在文件组正下方。 */
+    function makeBar(text, rect) {
+      return { text, ...barPosition(rect, BANNER_CLEAR + BAR_HEIGHT + BAR_GAP) };
     }
 
     /** 通过异步剪贴板接口写入；不可用或被拒绝时返回 false。 */
@@ -265,6 +312,22 @@ window.__ModuleLoader__.load({
       return false;
     }
 
+    /** 复制引用到剪贴板，并以 flash 反馈成功/失败。 */
+    function copyReference(text, flash) {
+      writeClipboard(text).then(flash);
+    }
+
+    /** 把引用插入输入框，并以 flash 反馈结果。 */
+    function insertReference(text, flash) {
+      let ok = false;
+      try {
+        ok = !!(currentDoc && currentDoc.insert && currentDoc.insert(text));
+      } catch (e) {
+        ok = false;
+      }
+      flash(ok);
+    }
+
     const CSS =
       /* 浮层：DSH 菜单同款毛玻璃质感——半透明底 + 背景模糊 + 统一投影 */
       '.dshCopyRefBar{position:fixed;z-index:2147483000;pointer-events:auto;box-sizing:border-box;' +
@@ -276,21 +339,24 @@ window.__ModuleLoader__.load({
       'border-radius:var(--dsw-radius-lg);' +
       '--dsw-elevation-stroke-color:var(--dsw-alias-border-l2);' +
       'box-shadow:var(--dsw-elevation-prominent);' +
-      'animation:dshCopyRefIn .16s cubic-bezier(.2,.8,.3,1);}' +
-      /* 进场：从右侧淡入；退场：向左淡出（关闭时触发） */
-      '@keyframes dshCopyRefIn{from{opacity:0;transform:translateX(10px);}' +
-      'to{opacity:1;transform:none;}}' +
-      '@keyframes dshCopyRefOut{from{opacity:1;transform:none;}' +
-      'to{opacity:0;transform:translateX(-12px);}}' +
-      '.dshCopyRefBar[data-leaving="true"]{animation:dshCopyRefOut .15s ease forwards;pointer-events:none;}' +
-      '@media (prefers-reduced-motion:reduce){.dshCopyRefBar{animation:none;}' +
-      '.dshCopyRefBar[data-leaving="true"]{animation:none;}}' +
+      /* 停止态：向右平移“自身一半宽+距右边缘距离”，只露左半 + 半透明 */
+      'transform:translateX(var(--dshPeekX,50%));opacity:.5;' +
+      'transition:transform .24s cubic-bezier(.2,.8,.3,1),opacity .24s ease;' +
+      /* 进场：从屏幕右侧滑出、落到“半透明只露一半”的停止态（新增/切换统一用这一套） */
+      'animation:dshCopyRefIn .3s cubic-bezier(.2,.8,.3,1);}' +
+      '@keyframes dshCopyRefIn{from{opacity:0;transform:translateX(calc(100% + 40px));}' +
+      'to{opacity:.5;transform:translateX(var(--dshPeekX,50%));}}' +
+      /* 鼠标悬停/键盘聚焦：继续向左滑出、变清晰 */
+      '.dshCopyRefBar:hover,.dshCopyRefBar:focus-within{transform:translateX(0);opacity:1;}' +
+      /* 退场：滑回右侧并淡出（关闭时触发），且不再播放进场 */
+      '.dshCopyRefBar[data-leaving="true"]{transform:translateX(var(--dshPeekX,50%));opacity:0;pointer-events:none;animation:none;transition:transform .15s ease,opacity .15s ease;}' +
+      '@media (prefers-reduced-motion:reduce){.dshCopyRefBar{transition:none;animation:none;}}' +
       /* 按钮：纯图标方形按钮，主操作品牌蓝填充，次操作透明悬浮 */
       '.dshCopyRefBtn{display:inline-flex;align-items:center;justify-content:center;' +
       'width:30px;height:30px;padding:0;border:none;border-radius:var(--dsw-radius-md);' +
       'font-family:inherit;color:inherit;background:transparent;cursor:pointer;box-sizing:border-box;' +
       'transition:background .12s ease,color .12s ease;}' +
-      '.dshCopyRefBtn svg{width:16px;height:16px;flex:none;display:block;}' +
+      '.dshCopyRefBtn svg{width:18px;height:18px;flex:none;display:block;}' +
       '.dshCopyRefBtn--primary{background:var(--dsw-alias-state-business-primary);' +
       'color:var(--dsw-alias-label-primary-foreground);}' +
       '.dshCopyRefBtn--primary:hover{filter:brightness(1.08);}' +
@@ -311,6 +377,9 @@ window.__ModuleLoader__.load({
       'color:var(--dsw-alias-label-primary);}' +
       '.dshCopyRefClose:focus-visible{outline:2px solid var(--dsw-alias-state-business-primary);outline-offset:1px;}';
 
+    // 成功/失败反馈在按钮上停留的时长（毫秒）。
+    const FLASH_MS = 1500;
+
     /** 反馈态：短暂显示 'done' | 'fail'。 */
     function useFlash(durationMs) {
       const [state, setState] = React.useState(false);
@@ -329,76 +398,103 @@ window.__ModuleLoader__.load({
       return t(state === 'done' ? done : state === 'fail' ? fail : idle);
     }
 
+    /** 渲染一个纯图标按钮；成功态自动切换成对勾并高亮。 */
+    function renderIconButton(key, variant, state, label, onClick, idleIcon) {
+      return h(
+        'button',
+        {
+          key,
+          type: 'button',
+          className: 'dshCopyRefBtn dshCopyRefBtn--' + variant,
+          'data-state': state === 'done' ? 'success' : undefined,
+          title: label,
+          'aria-label': label,
+          onClick,
+        },
+        h(MorphIcon, {
+          size: 18,
+          strokeWidth: 1.5,
+          color: 'currentColor',
+          icon: state === 'done' ? MORPH_ICONS.check : idleIcon,
+        }),
+      );
+    }
+
+    /** 渲染一条悬浮工具条外壳（文件组与行组共用同一套外观与交互）。 */
+    function renderBar({ key, label, top, right, innerRef, leaving, children }) {
+      return h(
+        'div',
+        {
+          key,
+          className: 'dshCopyRefBar',
+          role: 'toolbar',
+          'aria-label': label,
+          'data-leaving': leaving ? 'true' : undefined,
+          ref: innerRef,
+          style: { top: top + 'px', right: right + 'px' },
+          // 阻止默认行为，避免点击工具条时丢失代码选区。
+          onMouseDown: (e) => e.preventDefault(),
+        },
+        children,
+      );
+    }
+
     function SelectionToolbar(props) {
       const t = typeof props.t === 'function' ? props.t : (key) => DEFAULT_LABELS[key] || key;
       const [bar, setBar] = React.useState(null);
-      const [copyState, flashCopy] = useFlash(1500);
-      const [insertState, flashInsert] = useFlash(1500);
+      const [copyState, flashCopy] = useFlash(FLASH_MS);
+      const [insertState, flashInsert] = useFlash(FLASH_MS);
+      // 文件级常驻工具条：只要打开代码文件就显示，不随选区出现/消失。
+      const [fileBar, setFileBar] = React.useState(null);
+      const [fileCopyState, flashFileCopy] = useFlash(FLASH_MS);
+      const [fileInsertState, flashFileInsert] = useFlash(FLASH_MS);
       // 点 × 关闭后，下一次选中/点击代码才重新出现。
       const dismissed = React.useRef(false);
-      // 退场、隐藏、进场重播各用一个定时器；barRef 同步记录当前浮层。
+      // 退场、隐藏各用一个定时器；barRef 同步记录当前浮层。
       const leaveTimer = React.useRef(0);
       const hideTimer = React.useRef(0);
-      const enterTimer = React.useRef(0);
-      const enterSeq = React.useRef(0);
-      const lastText = React.useRef(null);
       const barRef = React.useRef(null);
+      // 两个浮层的 DOM 引用：用来量宽度，算“只露一半”的横向位移量。
+      const fileBarDom = React.useRef(null);
+      const lineBarDom = React.useRef(null);
       React.useEffect(() => () => {
         clearTimer(leaveTimer);
         clearTimer(hideTimer);
-        clearTimer(enterTimer);
       }, []);
 
-      const copy = React.useCallback((text) => {
-        writeClipboard(text).then(flashCopy);
-      }, [flashCopy]);
+      // “默认只露一半”：把浮层向右平移「自身一半宽 + 距视口右边缘距离」，
+      // 让右半滑出屏幕、只在右边露出一半；量到宽度后在绘制前写回 CSS 变量。
+      useIsomorphicLayoutEffect(() => {
+        [fileBarDom.current, lineBarDom.current].forEach((el) => {
+          if (!el) return;
+          const gap = parseFloat(el.style.right) || 0;
+          el.style.setProperty('--dshPeekX', Math.round(el.offsetWidth / 2 + gap) + 'px');
+        });
+      }, [fileBar, bar]);
 
-      const insert = React.useCallback((text) => {
-        let ok = false;
-        try {
-          ok = !!(currentDoc && currentDoc.insert && currentDoc.insert(text));
-        } catch (e) {
-          ok = false;
-        }
-        flashInsert(ok);
-      }, [flashInsert]);
+      // 行级 / 文件级按钮复用同一套复制、插入逻辑，只是绑定各自的反馈态。
+      const copy = React.useCallback((text) => copyReference(text, flashCopy), [flashCopy]);
+      const insert = React.useCallback((text) => insertReference(text, flashInsert), [flashInsert]);
+      const copyFile = React.useCallback((text) => copyReference(text, flashFileCopy), [flashFileCopy]);
+      const insertFile = React.useCallback((text) => insertReference(text, flashFileInsert), [flashFileInsert]);
 
-      // 换行时更新引用文本；首次出现立即播放进场动画。
-      // 拖动选择会让文本连续变化，先等 180ms 停稳再重播，避免右上角一直闪。
+      // 选中新行时：若工具条已存在就直接复用，只更新文字与位置，不重播进场动画。
       const buildBar = React.useCallback((text, rect) => {
-        if (lastText.current !== text) {
-          lastText.current = text;
-          if (!barRef.current || barRef.current.leaving) {
-            enterSeq.current += 1;
-          } else {
-            clearTimer(enterTimer);
-            enterTimer.current = window.setTimeout(() => {
-              enterTimer.current = 0;
-              const current = barRef.current;
-              if (!current || current.leaving) return;
-              const next = { ...current, seq: (enterSeq.current += 1) };
-              barRef.current = next;
-              setBar(next);
-            }, 180);
-          }
-        }
-        const next = { ...makeBar(text, rect), seq: enterSeq.current };
+        const next = makeBar(text, rect);
         barRef.current = next;
         return next;
       }, []);
 
-      // 统一退场：先向左淡出，动画结束再卸载。
+      // 统一退场：滑回右侧并淡出，动画结束再卸载。
       const removeWithAnim = React.useCallback(() => {
         if (leaveTimer.current || !barRef.current) return;
         clearTimer(hideTimer);
-        clearTimer(enterTimer);
         const current = barRef.current;
         const leaving = { ...current, leaving: true };
         barRef.current = leaving;
         setBar(leaving);
         leaveTimer.current = window.setTimeout(() => {
           leaveTimer.current = 0;
-          lastText.current = null;
           barRef.current = null;
           setBar(null);
         }, 160);
@@ -424,10 +520,29 @@ window.__ModuleLoader__.load({
         removeWithAnim();
       }, [removeWithAnim]);
 
+      // 计算文件级工具条的锚点：取当前文档前缀 + 代码预览矩形；无预览则隐藏。
+      // 值未变化时不触发重渲染，避免滚动时无谓刷新。
+      const syncFileBar = React.useCallback(() => {
+        let next = null;
+        try {
+          const rect = activePreview();
+          if (currentDoc && rect) next = { text: currentDoc.prefix, ...barPosition(rect, BANNER_CLEAR) };
+        } catch (e) {
+          next = null;
+        }
+        setFileBar((prev) => (
+          prev && next && prev.text === next.text && prev.top === next.top && prev.right === next.right
+            ? prev
+            : next
+        ));
+      }, []);
+
       React.useEffect(() => {
         let raf = 0;
         const layout = () => {
           raf = 0;
+          // 文件组常驻：每次布局都先把它定位好，再处理行选区。
+          syncFileBar();
           if (dismissed.current) {
             removeWithAnim();
             return;
@@ -471,59 +586,51 @@ window.__ModuleLoader__.load({
         window.addEventListener('resize', schedule);
         document.addEventListener('mouseup', gesture, true);
         document.addEventListener('keyup', gesture, true);
+        // 文档打开/关闭时也重新定位文件组。
+        docSubscribers.add(schedule);
         schedule();
         return () => {
           if (raf) window.cancelAnimationFrame(raf);
+          docSubscribers.delete(schedule);
           document.removeEventListener('selectionchange', schedule);
           document.removeEventListener('scroll', schedule, true);
           window.removeEventListener('resize', schedule);
           document.removeEventListener('mouseup', gesture, true);
           document.removeEventListener('keyup', gesture, true);
         };
-      }, [copy, removeWithAnim, scheduleHide, cancelExit, buildBar]);
+      }, [copy, removeWithAnim, scheduleHide, cancelExit, buildBar, syncFileBar]);
 
-      if (!bar) return null;
+      if (!fileBar && !bar) return null;
 
       const copyLabel = flashLabel(t, copyState, 'copy', 'copied', 'fail');
       const insertLabel = flashLabel(t, insertState, 'insert', 'inserted', 'insertFail');
+      const fileCopyLabel = flashLabel(t, fileCopyState, 'fileCopy', 'copied', 'fail');
+      const fileInsertLabel = flashLabel(t, fileInsertState, 'fileInsert', 'inserted', 'insertFail');
 
-      // 两个纯图标按钮只差样式和图标，抽成一个渲染函数收敛重复代码。
-      const iconButton = (key, variant, state, label, onClick, idleIcon) =>
-        h(
-          'button',
-          {
-            key,
-            type: 'button',
-            className: 'dshCopyRefBtn dshCopyRefBtn--' + variant,
-            'data-state': state === 'done' ? 'success' : undefined,
-            title: label,
-            'aria-label': label,
-            onClick,
-          },
-          h(MorphIcon, {
-            size: 16,
-            strokeWidth: 1.5,
-            color: 'currentColor',
-            icon: state === 'done' ? MORPH_ICONS.check : idleIcon,
-          }),
-        );
+      const toolbarLabel = t('toolbarLabel');
 
-      return h(
-        React.Fragment,
-        null,
-        h('style', { key: 'style' }, CSS),
-        h(
-          'div',
-          {
-            key: 'bar-' + (bar.seq || 0),
-            className: 'dshCopyRefBar',
-            role: 'toolbar',
-            'aria-label': t('toolbarLabel'),
-            'data-leaving': bar.leaving ? 'true' : undefined,
-            style: { top: bar.top + 'px', right: bar.right + 'px' },
-            // 阻止默认行为，避免点击工具栏时丢失代码选区。
-            onMouseDown: (e) => e.preventDefault(),
-          },
+      // 文件级工具条：常驻、无关闭按钮，作用于整个文件（@路径，不带行号）。
+      const fileBarEl = fileBar && renderBar({
+        key: 'filebar-' + fileBar.text,
+        label: toolbarLabel,
+        top: fileBar.top,
+        right: fileBar.right,
+        innerRef: fileBarDom,
+        children: [
+          renderIconButton('file-copy', 'primary', fileCopyState, fileCopyLabel, () => copyFile(fileBar.text), MORPH_ICONS.copy),
+          renderIconButton('file-insert', 'ghost', fileInsertState, fileInsertLabel, () => insertFile(fileBar.text), MORPH_ICONS.fileInsert),
+        ],
+      });
+
+      // 行级工具条：随选区出现，带关闭按钮，作用于选中的行。
+      const lineBarEl = bar && renderBar({
+        key: 'bar',
+        label: toolbarLabel,
+        top: bar.top,
+        right: bar.right,
+        innerRef: lineBarDom,
+        leaving: bar.leaving,
+        children: [
           h(
             'button',
             {
@@ -536,9 +643,17 @@ window.__ModuleLoader__.load({
             },
             ICON_CLOSE,
           ),
-          iconButton('copy', 'primary', copyState, copyLabel, () => copy(bar.text), MORPH_ICONS.copy),
-          iconButton('insert', 'ghost', insertState, insertLabel, () => insert(bar.text), MORPH_ICONS.arrow),
-        ),
+          renderIconButton('copy', 'primary', copyState, copyLabel, () => copy(bar.text), MORPH_ICONS.copy),
+          renderIconButton('insert', 'ghost', insertState, insertLabel, () => insert(bar.text), MORPH_ICONS.lineInsert),
+        ],
+      });
+
+      return h(
+        React.Fragment,
+        null,
+        h('style', { key: 'style' }, CSS),
+        fileBarEl,
+        lineBarEl,
       );
     }
 
