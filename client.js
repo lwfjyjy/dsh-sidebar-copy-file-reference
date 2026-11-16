@@ -9,6 +9,15 @@ window.__ModuleLoader__.load({
 
     const NS = 'sidebarCopyFileReference';
 
+    // ── 布局与交互配置 ──
+    // 原生代码块顶部有一条「语言 + 复制/换行」横幅（约 36~42px），两组浮层都落在它下方，避免遮挡原生复制按钮。
+    const BANNER_CLEAR = 48; // 文件组相对代码区顶部的额外下移量
+    const BAR_HEIGHT = 36;   // 单条工具条高度：30px 按钮 + 上下各 3px 内边距
+    const BAR_GAP = 6;       // 两条工具条之间的间距
+    const RIGHT_GAP = 12;    // 右侧留白，容纳行组右上角的关闭按钮
+    const DIFF_CLEAR = 8;    // diff 正文顶部没有横幅，只留少量间距
+    const FLASH_MS = 1500;   // 成功/失败反馈在按钮上停留的时长（毫秒）
+
     /** 中文词典同时作为 locale 服务缺席时的兜底文案。 */
     const DEFAULT_LABELS = {
       copy: '复制引用',
@@ -73,16 +82,32 @@ window.__ModuleLoader__.load({
 
     // 文档预览没有暴露选区 API，所以行号只能从已渲染的代码块反推。
     // 头部探针（会话级）把当前文件前缀和输入框的插入动作发布到这里。
-    let currentDoc = null;
+    // ── 引用表面状态（探针 + 变更通知） ──
+    // 两种引用表面各自的“探针”状态：doc 提供文件前缀，diff 只提供插入动作
+    // （diff 的文件路径由浮层从 DOM 实时读取，避免多标签页之间互相覆盖）。
+    const probes = { doc: null, diff: null };
 
-    // 文档切换（打开/关闭文件）时通知常驻的文件级工具条重新定位。
-    const docSubscribers = new Set();
-    function publishDoc() {
-      docSubscribers.forEach((fn) => {
+    // 可见表面（代码预览 / diff 评审）变化时，通知常驻的文件级工具条重新定位。
+    const surfaceListeners = new Set();
+    function notifySurfaces() {
+      surfaceListeners.forEach((fn) => {
         try { fn(); } catch (e) { /* 忽略单个订阅者异常 */ }
       });
     }
 
+    /** 把输入框动作封装成“插入引用”函数；没有可用动作时返回 null。 */
+    function makeInserter(inputActions) {
+      if (!inputActions || typeof inputActions.insertText !== 'function') return null;
+      return (text) => {
+        try {
+          return inputActions.insertText(text + ' ', inputActions.captureInsertion()) !== false;
+        } catch (e) {
+          return false;
+        }
+      };
+    }
+
+    // ── 路径 / DOM 基础工具 ──
     /** 把绝对路径转成相对会话工作目录的路径。 */
     function toRelativePath(absolutePath, cwd) {
       if (typeof absolutePath !== 'string' || absolutePath === '') return '';
@@ -113,15 +138,64 @@ window.__ModuleLoader__.load({
       return rect.width < 80 || rect.height < 60 ? null : rect;
     }
 
-    // 页面里可能同时存在多个代码预览（如聊天记录里的代码块），
-    // 取最靠右且可见的那个，基本就是右侧栏当前打开的文档。
-    function activePreview() {
-      let best = null;
-      document.querySelectorAll('[data-code-preview]').forEach((el) => {
-        const rect = previewRect(el);
-        if (rect && (!best || rect.left > best.left)) best = rect;
+    // ── 引用表面识别（代码预览 / diff 评审） ──
+    /**
+     * 收集当前可见的引用表面（代码预览 / diff 评审），按“最靠右优先”排序。
+     * 同一时刻可能同时存在多个隐藏 tab，取最靠右的即右侧栏当前展示的内容。
+     */
+    function listSurfaces() {
+      const out = [];
+      // 页面里可能同时存在多个代码预览（如聊天记录里的代码块）。
+      document.querySelectorAll('[data-code-preview]').forEach((root) => {
+        const rect = previewRect(root);
+        if (rect) out.push({ kind: 'code', root, rect });
       });
-      return best;
+      // 评审 diff 视图同理：可能有多个隐藏的评审 tab。
+      document.querySelectorAll('[data-changes-review]').forEach((root) => {
+        const rect = previewRect(root);
+        if (!rect) return;
+        const body = root.querySelector('[data-review-view]') || root;
+        out.push({ kind: 'diff', root, body, rect, bodyRect: previewRect(body) || rect });
+      });
+      return out.sort((a, b) => b.rect.left - a.rect.left);
+    }
+
+    /** diff 正文里某一行的“新文件行号”（统一视图取第二个行号，分栏视图取右侧行号）。 */
+    function diffNewNumber(row, body) {
+      const num = (el) => {
+        const n = el && parseInt(el.textContent, 10);
+        return Number.isFinite(n) ? n : null;
+      };
+      // 统一视图：行内依次是旧行号、新行号、符号、文本。
+      if (body.getAttribute('data-review-view') === 'unified') return num(row.children[1]);
+      // 分栏视图：只有右侧（新文件）列的行会传进来，行内第一个 span 是新行号。
+      if (row.closest('[data-diff-side]')) return num(row.children[0]);
+      // 分栏换行视图：一行两格，右格第一个 span 是新行号。
+      const rightCell = row.children[1];
+      return num(rightCell && rightCell.children[0]);
+    }
+
+    /** diff 行里承载“新文件”内容的那一格；分栏旧侧返回 null（旧文件已改动，不提供引用）。 */
+    function diffNewCell(row, body) {
+      const column = row.closest('[data-diff-side]');
+      if (column) return column.getAttribute('data-diff-side') === 'right' ? row : null;
+      // 换行分栏：一行两格，右格为新文件。
+      if (body.getAttribute('data-review-view') === 'split') {
+        return row.children.length === 2 ? row.children[1] : null;
+      }
+      // 统一视图整行参与，纯删除行稍后由 diffNewNumber 过滤。
+      return row;
+    }
+
+    /** 从节点解析出 diff 评审的上下文（根 / 正文 / 文件路径 / 定位矩形）；不在 diff 内返回 null。 */
+    function diffContext(node) {
+      const root = closestFrom(node, '[data-changes-review]');
+      if (!root) return null;
+      const body = root.querySelector('[data-review-view]');
+      const fileEl = root.querySelector('[data-review-file]');
+      const filePath = fileEl && fileEl.getAttribute('data-review-file');
+      if (!body || !filePath) return null;
+      return { root, body, filePath, rect: previewRect(body) || previewRect(root) };
     }
 
     /** 清掉并复位一个定时器 ref。 */
@@ -135,26 +209,31 @@ window.__ModuleLoader__.load({
     /** 藏在文档头部的隐形探针：发布当前文件前缀和插入动作。 */
     function DocProbe(props) {
       const cwd = props.useSessions((state) => state.byId[props.sessionId]?.cwd);
-      const inputActions = props.inputActions;
+      const { inputActions } = props;
       React.useEffect(() => {
-        const insert =
-          inputActions && typeof inputActions.insertText === 'function'
-            ? (text) => {
-                try {
-                  return inputActions.insertText(text + ' ', inputActions.captureInsertion()) !== false;
-                } catch (e) {
-                  return false;
-                }
-              }
-            : null;
-        const mine = { prefix: '@' + toRelativePath(props.absolutePath, cwd), insert };
-        currentDoc = mine;
-        publishDoc();
+        const mine = { prefix: '@' + toRelativePath(props.absolutePath, cwd), insert: makeInserter(inputActions) };
+        probes.doc = mine;
+        notifySurfaces();
         return () => {
-          if (currentDoc === mine) currentDoc = null;
-          publishDoc();
+          if (probes.doc === mine) probes.doc = null;
+          notifySurfaces();
         };
       }, [props.absolutePath, cwd, inputActions]);
+      return null;
+    }
+
+    /** 藏进 diff 评审头部的隐形探针：只发布插入动作，路径由浮层从 DOM 实时读取。 */
+    function DiffProbe(props) {
+      const { inputActions } = props;
+      useIsomorphicLayoutEffect(() => {
+        const mine = { insert: makeInserter(inputActions) };
+        probes.diff = mine;
+        notifySurfaces();
+        return () => {
+          if (probes.diff === mine) probes.diff = null;
+          notifySurfaces();
+        };
+      }, [props.actionUrl, inputActions]);
       return null;
     }
 
@@ -181,10 +260,11 @@ window.__ModuleLoader__.load({
       return range.toString().split('\n').length;
     }
 
+    // ── 选区 → 引用文本 ──
     /** 当前非折叠选区对应的引用文本与浮层位置。 */
     function selectionInfo() {
       const sel = window.getSelection();
-      if (!sel || sel.rangeCount === 0 || sel.isCollapsed || !currentDoc) return null;
+      if (!sel || sel.rangeCount === 0 || sel.isCollapsed || !probes.doc) return null;
       const range = sel.getRangeAt(0);
       const preview = closestFrom(range.startContainer, '[data-code-preview]');
       if (!preview) return null;
@@ -213,7 +293,38 @@ window.__ModuleLoader__.load({
       const rect = previewRect(preview);
       if (!rect) return null;
       const rangeText = start === end ? '#L' + start : '#L' + start + '-L' + end;
-      return { text: currentDoc.prefix + rangeText, rect };
+      return makeRef(probes.doc.prefix + rangeText, rect, BANNER_CLEAR, probes.doc.insert);
+    }
+
+    /** diff 评审视图中当前选区对应的引用文本与位置。 */
+    function diffSelectionInfo() {
+      const sel = window.getSelection();
+      if (!sel || sel.rangeCount === 0 || sel.isCollapsed) return null;
+      const range = sel.getRangeAt(0);
+      const ctx = diffContext(range.startContainer);
+      if (!ctx || !ctx.body.contains(range.startContainer) || !ctx.body.contains(range.endContainer) || !ctx.rect) return null;
+      // 只统计选区真正覆盖到、且属于“新文件”一侧的行，取其中的新文件行号区间。
+      const numbers = [];
+      ctx.body.querySelectorAll('[data-diff-line]').forEach((row) => {
+        const cell = diffNewCell(row, ctx.body);
+        if (!cell || !range.intersectsNode(cell)) return;
+        const no = diffNewNumber(row, ctx.body);
+        if (no != null) numbers.push(no);
+      });
+      if (numbers.length === 0) return null;
+      const start = Math.min(...numbers);
+      const end = Math.max(...numbers);
+      const rangeText = start === end ? '#L' + start : '#L' + start + '-L' + end;
+      return makeRef('@' + ctx.filePath + rangeText, ctx.rect, DIFF_CLEAR, probes.diff && probes.diff.insert);
+    }
+
+    /** 按当前选区落在 diff 还是代码预览，分派到对应的选区解析。 */
+    function currentSelectionInfo() {
+      const sel = window.getSelection();
+      if (!sel || sel.rangeCount === 0 || sel.isCollapsed) return null;
+      const range = sel.getRangeAt(0);
+      if (closestFrom(range.startContainer, '[data-changes-review]')) return diffSelectionInfo();
+      return selectionInfo();
     }
 
     /** 鼠标手势落在代码预览里的那一行。 */
@@ -230,6 +341,31 @@ window.__ModuleLoader__.load({
       }
       lineEl = closestFrom(node, '.line');
       return lineEl && lineEl.closest('[data-code-preview]') ? lineEl : null;
+    }
+
+    /** 鼠标手势落在 diff 视图里的那一行（仅新文件一侧）。 */
+    function diffRowFromEvent(event) {
+      // 命中行还必须落在“新文件”那一格；分栏旧侧、换行分栏的左格都返回 null。
+      const resolve = (node) => {
+        const row = closestFrom(node, '[data-diff-line]');
+        const ctx = row && diffContext(row);
+        if (!ctx || !ctx.body.contains(row)) return null;
+        const cell = diffNewCell(row, ctx.body);
+        if (!cell || !node) return null;
+        if (cell !== row && !cell.contains(node)) return null;
+        return row;
+      };
+      let row = resolve(event.target);
+      if (row) return row;
+      let node = null;
+      if (document.caretRangeFromPoint) {
+        const range = document.caretRangeFromPoint(event.clientX, event.clientY);
+        node = range && range.startContainer;
+      } else if (document.caretPositionFromPoint) {
+        const pos = document.caretPositionFromPoint(event.clientX, event.clientY);
+        node = pos && pos.offsetNode;
+      }
+      return resolve(node);
     }
 
     /** 整行选中一个源码行。 */
@@ -255,38 +391,38 @@ window.__ModuleLoader__.load({
     function resolveGesture(event) {
       const isKey = event.type === 'keyup';
       const sel = window.getSelection();
-      if (!sel || sel.rangeCount === 0 || !currentDoc) return null;
+      if (!sel || sel.rangeCount === 0) return null;
 
-      // 单击某一行：整行选中并引用。
+      // 单击某一行：整行选中并引用（先看 diff 行，再看代码行）。
       if (sel.isCollapsed) {
         if (isKey) return null;
+        const row = diffRowFromEvent(event);
+        if (row) {
+          const ctx = diffContext(row);
+          const no = ctx ? diffNewNumber(row, ctx.body) : null;
+          if (!ctx || !ctx.rect || no == null || !probes.diff) return null;
+          selectLine(row);
+          return makeRef('@' + ctx.filePath + '#L' + no, ctx.rect, DIFF_CLEAR, probes.diff.insert);
+        }
         const lineEl = lineFromEvent(event);
         const code = lineEl && lineEl.parentElement;
         const idx = code ? lineElementsOf(code).indexOf(lineEl) : -1;
-        const preview = lineEl && lineEl.closest('[data-code-preview]');
-        const rect = previewRect(preview);
-        if (idx < 0 || !rect) return null;
+        const rect = previewRect(lineEl && lineEl.closest('[data-code-preview]'));
+        if (idx < 0 || !rect || !probes.doc) return null;
         selectLine(lineEl);
-        return { text: currentDoc.prefix + '#L' + (idx + 1), rect };
+        return makeRef(probes.doc.prefix + '#L' + (idx + 1), rect, BANNER_CLEAR, probes.doc.insert);
       }
 
       // 拖动或键盘选择：引用选中的范围。
       if (isKey && !isSelectionKey(event)) return null;
       if (!isKey) {
         const tgt = event.target;
-        if (!(tgt && tgt.closest && tgt.closest('[data-code-preview]'))) return null;
+        if (!(tgt && tgt.closest && (tgt.closest('[data-code-preview]') || tgt.closest('[data-changes-review]')))) return null;
       }
-      return selectionInfo();
+      return currentSelectionInfo();
     }
 
-    // 原生代码块顶部有一条「语言 + 复制/换行」横幅（约 36~42px），
-    // 两组悬浮工具条都要落在它下方，避免遮挡原生复制按钮。
-    const BANNER_CLEAR = 48;   // 文件组距代码区顶部：越过原生横幅再留安全间距
-    const BAR_HEIGHT = 36;     // 单条工具条高度：30px 按钮 + 上下各 3px 内边距
-    const BAR_GAP = 6;         // 两条工具条之间的间距
-    const RIGHT_GAP = 12;      // 右侧留白，容纳行组右上角的关闭按钮
-
-    /** 计算浮层在代码预览区右上角的锚点，top 由调用方按需叠加。 */
+    /** 计算浮层在预览区右上角的锚点，top 由调用方按需叠加。 */
     function barPosition(rect, topOffset) {
       return {
         top: Math.round(rect.top + topOffset),
@@ -295,8 +431,36 @@ window.__ModuleLoader__.load({
     }
 
     /** 行引用工具条：锚定在文件组正下方。 */
-    function makeBar(text, rect) {
-      return { text, ...barPosition(rect, BANNER_CLEAR + BAR_HEIGHT + BAR_GAP) };
+    function makeBar(text, rect, clear) {
+      return { text, ...barPosition(rect, (clear == null ? BANNER_CLEAR : clear) + BAR_HEIGHT + BAR_GAP) };
+    }
+
+    /** 组装一条引用信息：文本 + 定位矩形 + 顶部间距 + 插入函数。 */
+    function makeRef(text, rect, clear, insert) {
+      return { text, rect, clear, insert: insert || null };
+    }
+
+    /** 某个可见表面作为“整文件引用”的信息；不可用时返回 null。 */
+    function fileRefOf(surface) {
+      if (surface.kind === 'code') {
+        const doc = probes.doc;
+        return doc && doc.prefix
+          ? { text: doc.prefix, insert: doc.insert, rect: surface.rect, clear: BANNER_CLEAR }
+          : null;
+      }
+      const fileEl = surface.root.querySelector('[data-review-file]');
+      const filePath = fileEl && fileEl.getAttribute('data-review-file');
+      if (!filePath || !probes.diff) return null;
+      return { text: '@' + filePath, insert: probes.diff.insert, rect: surface.bodyRect, clear: DIFF_CLEAR };
+    }
+
+    /** 当前可见的引用表面（代码预览或 diff 评审），取最靠右且有引用信息者，供文件级工具条使用。 */
+    function activeSurface() {
+      for (const surface of listSurfaces()) {
+        const ref = fileRefOf(surface);
+        if (ref) return ref;
+      }
+      return null;
     }
 
     /** 通过异步剪贴板接口写入；不可用或被拒绝时返回 false。 */
@@ -317,11 +481,11 @@ window.__ModuleLoader__.load({
       writeClipboard(text).then(flash);
     }
 
-    /** 把引用插入输入框，并以 flash 反馈结果。 */
-    function insertReference(text, flash) {
+    /** 把引用插入输入框（insert 为对应表面的插入函数），并以 flash 反馈结果。 */
+    function insertReference(text, flash, insert) {
       let ok = false;
       try {
-        ok = !!(currentDoc && currentDoc.insert && currentDoc.insert(text));
+        ok = !!(typeof insert === 'function' && insert(text));
       } catch (e) {
         ok = false;
       }
@@ -376,9 +540,6 @@ window.__ModuleLoader__.load({
       '.dshCopyRefClose:hover{background:var(--dsw-alias-interactive-bg-hover);' +
       'color:var(--dsw-alias-label-primary);}' +
       '.dshCopyRefClose:focus-visible{outline:2px solid var(--dsw-alias-state-business-primary);outline-offset:1px;}';
-
-    // 成功/失败反馈在按钮上停留的时长（毫秒）。
-    const FLASH_MS = 1500;
 
     /** 反馈态：短暂显示 'done' | 'fail'。 */
     function useFlash(durationMs) {
@@ -474,13 +635,13 @@ window.__ModuleLoader__.load({
 
       // 行级 / 文件级按钮复用同一套复制、插入逻辑，只是绑定各自的反馈态。
       const copy = React.useCallback((text) => copyReference(text, flashCopy), [flashCopy]);
-      const insert = React.useCallback((text) => insertReference(text, flashInsert), [flashInsert]);
+      const insert = React.useCallback((text, fn) => insertReference(text, flashInsert, fn), [flashInsert]);
       const copyFile = React.useCallback((text) => copyReference(text, flashFileCopy), [flashFileCopy]);
-      const insertFile = React.useCallback((text) => insertReference(text, flashFileInsert), [flashFileInsert]);
+      const insertFile = React.useCallback((text, fn) => insertReference(text, flashFileInsert, fn), [flashFileInsert]);
 
       // 选中新行时：若工具条已存在就直接复用，只更新文字与位置，不重播进场动画。
-      const buildBar = React.useCallback((text, rect) => {
-        const next = makeBar(text, rect);
+      const buildBar = React.useCallback((text, rect, clear, insertFn) => {
+        const next = { ...makeBar(text, rect, clear), insert: insertFn || null };
         barRef.current = next;
         return next;
       }, []);
@@ -520,13 +681,13 @@ window.__ModuleLoader__.load({
         removeWithAnim();
       }, [removeWithAnim]);
 
-      // 计算文件级工具条的锚点：取当前文档前缀 + 代码预览矩形；无预览则隐藏。
+      // 计算文件级工具条的锚点：取当前可见表面（代码预览或 diff）的前缀与矩形；无则隐藏。
       // 值未变化时不触发重渲染，避免滚动时无谓刷新。
       const syncFileBar = React.useCallback(() => {
         let next = null;
         try {
-          const rect = activePreview();
-          if (currentDoc && rect) next = { text: currentDoc.prefix, ...barPosition(rect, BANNER_CLEAR) };
+          const surface = activeSurface();
+          if (surface) next = { text: surface.text, insert: surface.insert, ...barPosition(surface.rect, surface.clear) };
         } catch (e) {
           next = null;
         }
@@ -549,7 +710,7 @@ window.__ModuleLoader__.load({
           }
           let info = null;
           try {
-            info = selectionInfo();
+            info = currentSelectionInfo();
           } catch (e) {
             info = null;
           }
@@ -558,7 +719,7 @@ window.__ModuleLoader__.load({
             return;
           }
           cancelExit();
-          setBar(buildBar(info.text, info.rect));
+          setBar(buildBar(info.text, info.rect, info.clear, info.insert));
         };
         const schedule = () => {
           if (!raf) raf = window.requestAnimationFrame(layout);
@@ -578,7 +739,7 @@ window.__ModuleLoader__.load({
           dismissed.current = false;
           cancelExit();
           copy(resolved.text);
-          setBar(buildBar(resolved.text, resolved.rect));
+          setBar(buildBar(resolved.text, resolved.rect, resolved.clear, resolved.insert));
         };
 
         document.addEventListener('selectionchange', schedule);
@@ -587,11 +748,11 @@ window.__ModuleLoader__.load({
         document.addEventListener('mouseup', gesture, true);
         document.addEventListener('keyup', gesture, true);
         // 文档打开/关闭时也重新定位文件组。
-        docSubscribers.add(schedule);
+        surfaceListeners.add(schedule);
         schedule();
         return () => {
           if (raf) window.cancelAnimationFrame(raf);
-          docSubscribers.delete(schedule);
+          surfaceListeners.delete(schedule);
           document.removeEventListener('selectionchange', schedule);
           document.removeEventListener('scroll', schedule, true);
           window.removeEventListener('resize', schedule);
@@ -618,7 +779,7 @@ window.__ModuleLoader__.load({
         innerRef: fileBarDom,
         children: [
           renderIconButton('file-copy', 'primary', fileCopyState, fileCopyLabel, () => copyFile(fileBar.text), MORPH_ICONS.copy),
-          renderIconButton('file-insert', 'ghost', fileInsertState, fileInsertLabel, () => insertFile(fileBar.text), MORPH_ICONS.fileInsert),
+          renderIconButton('file-insert', 'ghost', fileInsertState, fileInsertLabel, () => insertFile(fileBar.text, fileBar.insert), MORPH_ICONS.fileInsert),
         ],
       });
 
@@ -644,7 +805,7 @@ window.__ModuleLoader__.load({
             ICON_CLOSE,
           ),
           renderIconButton('copy', 'primary', copyState, copyLabel, () => copy(bar.text), MORPH_ICONS.copy),
-          renderIconButton('insert', 'ghost', insertState, insertLabel, () => insert(bar.text), MORPH_ICONS.lineInsert),
+          renderIconButton('insert', 'ghost', insertState, insertLabel, () => insert(bar.text, bar.insert), MORPH_ICONS.lineInsert),
         ],
       });
 
@@ -672,6 +833,13 @@ window.__ModuleLoader__.load({
         ctx.slots.register(
           { name: 'sidebar.right.tab.document.actions', id: 'sidebar-copy-file-reference-probe', order: 50 },
           DocProbe,
+        ),
+      );
+      // diff 评审 tab 也挂一个隐形探针，让工具条能拿到输入框的插入动作。
+      ctx.slots.inject('deliverables.review.file.actions', () =>
+        ctx.slots.register(
+          { name: 'deliverables.review.file.actions', id: 'sidebar-copy-file-reference-diff-probe', order: 50 },
+          DiffProbe,
         ),
       );
     }
